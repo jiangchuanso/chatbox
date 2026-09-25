@@ -50,6 +50,15 @@ export const SearchResultItemSchema = z.object({
   title: z.string(),
   link: z.string(),
   snippet: z.string(),
+  /**
+   * Optional source metadata, passed through verbatim by providers whose protocol
+   * carries more than title/link/snippet (e.g. SearXNG-compatible document search
+   * instances expose the file type, size, id and matched-paragraph count).
+   */
+  fileType: z.string().optional(),
+  fileSize: z.number().optional(),
+  fileId: z.string().optional(),
+  snippetCount: z.number().optional(),
 })
 
 export const SearchResultSchema = z.object({

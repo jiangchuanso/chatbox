@@ -71,6 +71,45 @@ describe('webSearchTool', () => {
       value: 'Result 1\nTitle: Result title\nURL: https://example.com/result\nSnippet:\nShort summary.',
     })
   })
+
+  it('includes provider-provided source fields in the model text', async () => {
+    await expect(
+      toModelOutput(webSearchTool, {
+        searchResults: [
+          {
+            title: '采购合同.docx',
+            snippet: '命中段落一\n命中段落二',
+            link: 'http://127.0.0.1:4607/uploads/%E9%87%87%E8%B4%AD.docx',
+            fileType: 'docx',
+            fileSize: 12345,
+            fileId: 'a1b2c3',
+            snippetCount: 2,
+          },
+        ],
+      })
+    ).resolves.toEqual({
+      type: 'text',
+      value: [
+        'Result 1',
+        'Title: 采购合同.docx',
+        'URL: http://127.0.0.1:4607/uploads/%E9%87%87%E8%B4%AD.docx',
+        'Source: docx · 12345 bytes · 2 matched paragraphs · file id a1b2c3',
+        'Snippet:',
+        '命中段落一\n命中段落二',
+      ].join('\n'),
+    })
+  })
+
+  it('renders only the source fields the provider actually sent', async () => {
+    const output = await toModelOutput(webSearchTool, {
+      searchResults: [{ title: 'Title', snippet: 'Body.', link: 'https://example.com', fileType: 'pdf' }],
+    })
+
+    expect(output).toEqual({
+      type: 'text',
+      value: 'Result 1\nTitle: Title\nURL: https://example.com\nSource: pdf\nSnippet:\nBody.',
+    })
+  })
 })
 
 describe('parseLinkTool', () => {

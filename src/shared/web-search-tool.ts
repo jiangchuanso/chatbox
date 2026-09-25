@@ -6,8 +6,35 @@ import type { ToolSet } from 'ai'
 // executor differs per platform; description, schema, and result shape must
 // stay identical so the model behaves the same everywhere.
 
+export interface WebSearchToolResultItem {
+  title: string
+  snippet: string
+  link: string
+  /**
+   * Optional source metadata, passed through verbatim when a provider's protocol
+   * carries more than title/link/snippet (e.g. a SearXNG-compatible document search
+   * exposes file type, size, id and matched-paragraph count).
+   */
+  fileType?: string
+  fileSize?: number
+  fileId?: string
+  snippetCount?: number
+}
+
 export interface WebSearchToolResult {
-  searchResults: Array<{ title: string; snippet: string; link: string }>
+  searchResults: WebSearchToolResultItem[]
+}
+
+/** Compact one-liner for the optional source metadata; empty when nothing was passed through. */
+function formatResultSource(result: WebSearchToolResultItem): string | null {
+  const parts: string[] = []
+  if (result.fileType) parts.push(result.fileType)
+  if (typeof result.fileSize === 'number') parts.push(`${result.fileSize} bytes`)
+  if (typeof result.snippetCount === 'number') {
+    parts.push(`${result.snippetCount} matched paragraph${result.snippetCount === 1 ? '' : 's'}`)
+  }
+  if (result.fileId) parts.push(`file id ${result.fileId}`)
+  return parts.length > 0 ? `Source: ${parts.join(' · ')}` : null
 }
 
 function formatWebSearchOutput(output: unknown): string {
@@ -20,6 +47,8 @@ function formatWebSearchOutput(output: unknown): string {
     .map((result, index) => {
       const parts = [`Result ${index + 1}`, `Title: ${result.title}`]
       if (result.link) parts.push(`URL: ${result.link}`)
+      const source = formatResultSource(result)
+      if (source) parts.push(source)
       if (result.snippet) parts.push(`Snippet:\n${result.snippet}`)
       return parts.join('\n')
     })
