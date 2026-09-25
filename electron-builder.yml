@@ -50,7 +50,7 @@ win:
         - x64
         - arm64
   verifyUpdateCodeSignature: false
-  artifactName: ${productName}-${version}-Setup.${ext}
+  artifactName: ${productName}-${version}-${arch}-Setup.${ext}
   signtoolOptions:
     sign: ./custom_win_sign.js
     signingHashAlgorithms:
@@ -73,6 +73,40 @@ linux:
         - arm64
   category: Development
   artifactName: ${productName}-${version}-${arch}.${ext}
+
+# deb 目标：银河麒麟 V10 SP1 桌面版（Ubuntu 20.04 基线 / glibc 2.31）等信创 Debian 系系统。
+#
+# depends 在这里显式声明，取值全部是 Ubuntu 20.04 仓库中存在的包名。目的是把依赖锁死，
+# 避免 electron-builder 未来的默认列表改成 22.04+/24.04 专有包名（libappindicator3-1 →
+# libayatana-appindicator3-1、libasound2 → libasound2t64 等）——那类包名在麒麟上不存在，
+# 会让 apt 直接报「无法满足依赖」。
+#
+# 不要覆盖 afterInstall / afterRemove：electron-builder 内置的 deb 后置脚本负责建立
+# /usr/bin/<executable> 链接、按内核是否支持 user namespace 决定 chrome-sandbox 的权限
+# （支持则 0755，不支持才 4755）、刷新 desktop/mime 数据库、装 AppArmor profile，
+# 覆盖它会丢掉这些逻辑并破坏安装/卸载。
+deb:
+  maintainer: Chatbox <hi@chatboxai.com>
+  vendor: Chatbox
+  synopsis: Chatbox AI desktop client
+  description: |
+    Chatbox - a desktop client for multiple cutting-edge AI models.
+    Runs on Debian-family domestic distributions such as Kylin V10 SP1.
+  depends:
+    - libgtk-3-0
+    - libnotify4
+    - libnss3
+    - libxss1
+    - libxtst6
+    - xdg-utils
+    - libatspi2.0-0
+    - libuuid1
+    - libsecret-1-0
+  # 托盘图标依赖：Ubuntu 20.04 / 麒麟 V10 SP1 上的包名是 libappindicator3-1，
+  # 22.04+ 改名为 libayatana-appindicator3-1（麒麟上没有），所以只做 recommends，
+  # 缺失时 apt 只提示不阻塞安装。
+  recommends:
+    - libappindicator3-1
 
 directories:
   app: release/app

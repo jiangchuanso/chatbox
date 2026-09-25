@@ -1,0 +1,332 @@
+# 桌面端发布流水线：tag 触发，产出全平台安装包。
+#
+# 触发方式：
+#   git tag v1.2.3 && git push origin v1.2.3      # 推送 v* tag 自动触发
+#   也可在 Actions 页面手动 workflow_dispatch。
+#
+# 构建矩阵（6 个平台/架构组合，每个组合一个 job）：
+#   windows-x64 / windows-arm64 / linux-x64 / linux-arm64 / mac-x64 / mac-arm64
+#
+# 每个架构都用**原生 runner**而不是交叉构建：包内含平台相关的原生模块
+# （@libsql/client 的 native binding、sharp），在 x64 runner 上交叉产出 arm64 包
+# 会打进错误架构的 .node，运行时报模块加载失败。
+#
+# 产物去向：
+#   1) 总是上传到本次 Actions 运行的 Artifacts（按架构分目录，一定可下载，无需任何 secrets）
+#   2) 若配置了 R2 凭据 secrets，则由 electron-builder 发布到 Cloudflare R2
+#      （见 electron-builder.yml 的 publish 段，供客户端内置自动更新使用）
+#   3) 推送 v* tag 时，额外创建一个 GitHub Release 并挂上各平台的安装包
+#      （见末尾 publish-release job，需要 contents: write 权限）
+#
+# 关于 R2 更新源：只有 matrix 里 publish=always 的架构（windows-x64 / linux-arm64）
+# 会把 latest.yml / latest-linux.yml 发布到 R2，其余架构只产出安装包。
+# 原因是 electron-builder 每个架构各写一份 latest-<os>.yml，而同一 OS 的多个架构
+# 文件名相同、内容只含本架构，全部发布到同一 channel 会互相覆盖，反而把已有的
+# 自动更新源打坏。新增架构要接入自动更新需要单独安排（例如按架构分 channel）。
+#
+# 需要的 Repository secrets（全部可选，缺省则只产出 Artifacts）：
+#   R2_ACCESS_KEY_ID / R2_SECRET_ACCESS_KEY
+#       —— 开启发布到 R2（S3 兼容）
+#   AZURE_KEY_VAULT_URL / AZURE_KEY_VAULT_CLIENT_ID / AZURE_KEY_VAULT_CLIENT_SECRET
+#   AZURE_KEY_VAULT_TENANT_ID / AZURE_KEY_VAULT_CERTIFICATE_NAME
+#       —— 开启 Windows 代码签名；缺省时 custom_win_sign.js 会自动跳过签名，不阻塞出包
+#   SENTRY_AUTH_TOKEN
+#       —— 上传 sourcemap 到 Sentry（可选）
+
+name: Release Desktop
+
+on:
+  push:
+    tags:
+      - 'v*'
+  workflow_dispatch:
+
+# 创建 GitHub Release（publish-release job）需要 write 权限；
+# 仅读取仓库时也能正常出包，只是不会生成 GitHub Release。
+permissions:
+  contents: write
+
+concurrency:
+  group: release-${{ github.ref }}
+  cancel-in-progress: false
+
+env:
+  # engines 要求 node >=22.13.0 <23
+  NODE_VERSION: '22'
+  # electron-builder publish 配置中的 ${env.UPDATE_CHANNEL}（stable / alpha）
+  UPDATE_CHANNEL: stable
+
+jobs:
+  # ============================================================
+  # 全平台构建
+  # ============================================================
+  build:
+    name: ${{ matrix.label }}
+    runs-on: ${{ matrix.runner }}
+    strategy:
+      # 某个 runner 不可用（如 windows-11-arm 仅对公开仓库开放）不应连带取消其它平台
+      fail-fast: false
+      matrix:
+        include:
+          - id: windows-x64
+            label: Windows x64 (.exe)
+            runner: windows-latest
+            os: win
+            arch: x64
+            node_platform: win32
+            publish: always
+            artifact_paths: |
+              release/build/*.exe
+              release/build/*.exe.blockmap
+              release/build/latest.yml
+
+          - id: windows-arm64
+            label: Windows arm64 (.exe)
+            runner: windows-11-arm
+            os: win
+            arch: arm64
+            node_platform: win32
+            publish: never
+            artifact_paths: |
+              release/build/*.exe
+              release/build/*.exe.blockmap
+
+          - id: linux-x64
+            label: Linux x64 (.deb)
+            runner: ubuntu-24.04
+            os: linux
+            arch: x64
+            node_platform: linux
+            publish: never
+            artifact_paths: |
+              release/build/*.deb
+
+          - id: linux-arm64
+            label: Linux arm64 (.deb)
+            # GitHub 原生 arm64 Linux runner，保证包内原生模块与目标架构一致
+            runner: ubuntu-24.04-arm
+            os: linux
+            arch: arm64
+            node_platform: linux
+            publish: always
+            artifact_paths: |
+              release/build/*.deb
+              release/build/latest-linux.yml
+
+          - id: mac-x64
+            label: macOS x64 (.dmg)
+            # Intel runner。macOS 13 镜像已逐步下线，若该标签不可用请改用其它 Intel 标签
+            runner: macos-15-intel
+            os: mac
+            arch: x64
+            node_platform: darwin
+            publish: never
+            artifact_paths: |
+              release/build/*.dmg
+
+          - id: mac-arm64
+            label: macOS arm64 (.dmg)
+            runner: macos-14
+            os: mac
+            arch: arm64
+            node_platform: darwin
+            publish: never
+            artifact_paths: |
+              release/build/*.dmg
+
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Setup pnpm
+        # 版本取自 package.json 的 packageManager 字段，勿在此指定 version
+        uses: pnpm/action-setup@v4
+
+      - name: Setup Node
+        uses: actions/setup-node@v4
+        with:
+          node-version: ${{ env.NODE_VERSION }}
+          cache: pnpm
+
+      - name: Install system deps
+        # deb 打包需要 fakeroot / dpkg
+        if: runner.os == 'Linux'
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y --no-install-recommends fakeroot dpkg
+
+      - name: Skip sharp's build script (Windows ARM64)
+        # windows-11-arm 上 sharp 必然构建失败：
+        #   sharp 0.32.x 从未发布 win32-arm64 预编译包（0.33 起才支持 Windows on ARM），
+        #   install 脚本只能回退到 node-gyp 源码编译，而该 runner 上 node-gyp 识别不了
+        #   VS2026 且没有 ARM64 C++ 工具链（日志：gyp ERR! find VS could not find a
+        #   version of Visual Studio 2017 or newer）。
+        # sharp 只由 devDependency @capacitor/assets（仅 mobile:assets 生成图标用）间接引入，
+        # 桌面端构建与打包都不需要它（release/app/package.json 的依赖里没有 sharp），
+        # 因此这里把它从 pnpm 构建白名单摘掉，让 pnpm 直接跳过它的构建脚本。
+        # 不动仓库里的白名单，是因为其它平台 sharp 有预编译包、本地 mobile:assets 仍需要它；
+        # 也不用 --ignore-scripts，那会连带跳过 release/app 的 postinstall（electron-rebuild
+        # + patch-libsql），使打包出的原生模块 ABI 不匹配。
+        if: matrix.id == 'windows-arm64'
+        shell: bash
+        run: |
+          node -e "const fs=require('fs');const f='package.json';const m=JSON.parse(fs.readFileSync(f,'utf8'));m.pnpm.onlyBuiltDependencies=(m.pnpm.onlyBuiltDependencies||[]).filter((name)=>name!=='sharp');fs.writeFileSync(f,JSON.stringify(m,null,2)+'\n');console.log('pnpm.onlyBuiltDependencies ->',m.pnpm.onlyBuiltDependencies.join(', '))"
+
+      - name: Install dependencies
+        shell: bash
+        run: |
+          # 网络抖动会让 pnpm install 失败（典型：sharp 从 GitHub Releases 拉 libvips 超时）。
+          # 首次用默认源；失败后重试，并把 sharp 二进制切换到 npmmirror 镜像再试。
+          # 重试只对网络抖动有效，确定性失败（如上一台 Windows ARM64 的 sharp 源码编译）
+          # 需在安装前消除，见上一步。
+          attempt=0
+          until pnpm install --frozen-lockfile; do
+            attempt=$((attempt + 1))
+            if [ "$attempt" -ge 3 ]; then
+              echo "::error::pnpm install failed after 3 attempts"
+              exit 1
+            fi
+            echo "::warning::pnpm install failed; retry #$attempt with npmmirror sharp binary mirror"
+            export npm_config_sharp_binary_host=https://registry.npmmirror.com/-/binary/sharp
+            export npm_config_sharp_libvips_binary_host=https://registry.npmmirror.com/-/binary/sharp-libvips
+            sleep 15
+          done
+
+      - name: Align version with tag
+        if: startsWith(github.ref, 'refs/tags/v')
+        shell: bash
+        run: |
+          node -e "const fs=require('fs');const v=process.env.GITHUB_REF_NAME.replace(/^v/,'');for(const p of ['release/app/package.json','release/app/package-lock.json']){const j=JSON.parse(fs.readFileSync(p,'utf8'));j.version=v;if(j.packages&&j.packages[''])j.packages[''].version=v;fs.writeFileSync(p,JSON.stringify(j,null,2)+'\n');}console.log('release/app version =>',v)"
+
+      - name: Build (main / preload / renderer)
+        run: pnpm run build
+
+      - name: Package & publish
+        env:
+          AWS_ACCESS_KEY_ID: ${{ secrets.R2_ACCESS_KEY_ID }}
+          AWS_SECRET_ACCESS_KEY: ${{ secrets.R2_SECRET_ACCESS_KEY }}
+          AZURE_KEY_VAULT_URL: ${{ secrets.AZURE_KEY_VAULT_URL }}
+          AZURE_KEY_VAULT_CLIENT_ID: ${{ secrets.AZURE_KEY_VAULT_CLIENT_ID }}
+          AZURE_KEY_VAULT_CLIENT_SECRET: ${{ secrets.AZURE_KEY_VAULT_CLIENT_SECRET }}
+          AZURE_KEY_VAULT_TENANT_ID: ${{ secrets.AZURE_KEY_VAULT_TENANT_ID }}
+          AZURE_KEY_VAULT_CERTIFICATE_NAME: ${{ secrets.AZURE_KEY_VAULT_CERTIFICATE_NAME }}
+          SENTRY_AUTH_TOKEN: ${{ secrets.SENTRY_AUTH_TOKEN }}
+          # 无签名证书时走 ad-hoc 签名，避免 electron-builder 在 macOS 上因hardenedRuntime
+          # 找不到身份而失败（本项目 mac.notarize 已关闭）
+          CSC_IDENTITY_AUTO_DISCOVERY: false
+        # 未配置 R2 凭据、或该架构不负责更新源时降级为 --publish never，仅产出本地安装包
+        run: pnpm exec electron-builder build --${{ matrix.os }} --${{ matrix.arch }} --publish ${{ secrets.R2_ACCESS_KEY_ID != '' && matrix.publish || 'never' }}
+
+      - name: Verify deb package (Kylin V10 SP1 / UOS)
+        # 信创 Debian 系（银河麒麟 V10 SP1、统信 UOS）的软件源里没有 *t64 系列包名，
+        # 依赖里一旦出现 t64，apt 会直接报「无法满足依赖」。这里在出包阶段就拦下来，
+        # 并把最终的 Architecture / Depends 打进日志，便于和目标系统逐条核对。
+        if: matrix.os == 'linux'
+        shell: bash
+        run: |
+          shopt -s nullglob
+          debs=(release/build/*.deb)
+          if [ ${#debs[@]} -eq 0 ]; then
+            echo "::error::未产出 deb 包"
+            exit 1
+          fi
+          for f in "${debs[@]}"; do
+            name=$(basename "$f")
+            echo "::group::dpkg-deb -I $name"
+            dpkg-deb -I "$f"
+            echo "::endgroup::"
+
+            arch=$(dpkg-deb -f "$f" Architecture)
+            depends=$(dpkg-deb -f "$f" Depends)
+            recommends=$(dpkg-deb -f "$f" Recommends)
+
+            case "$name" in
+              *"$arch"*) ;;
+              *) echo "::error::$name 文件名与 Architecture=$arch 不一致"; exit 1 ;;
+            esac
+
+            if echo "$depends" | tr ',' '\n' | grep -q 't64'; then
+              echo "::error::$name 的 Depends 含 *t64 包名，银河麒麟 V10 SP1 / 统信 UOS 无法解析"
+              exit 1
+            fi
+
+            if ! dpkg-deb -c "$f" | grep -q 'chrome-sandbox'; then
+              echo "::error::$name 缺少 chrome-sandbox，Electron 沙箱无法初始化"
+              exit 1
+            fi
+
+            echo "::notice::$name Architecture=$arch Depends=$depends Recommends=$recommends"
+          done
+
+      - name: Verify deb deps on Ubuntu 20.04 baseline (Kylin V10 SP1 desktop)
+        # 麒麟 V10 SP1 桌面版即 Ubuntu 20.04 基线（glibc 2.31），也正是 Electron 预编译二进制的
+        # 构建基线。这里用 ubuntu:20.04 容器对 deb 的 Depends / Recommends 做 apt 模拟安装，
+        # 确认它们在目标基线上能被解析——即「在麒麟上装得上」的机器验证。
+        # 依赖与架构无关，只在 linux-x64 上跑一次即可。
+        if: matrix.os == 'linux' && matrix.arch == 'x64'
+        shell: bash
+        run: |
+          f=$(ls release/build/*.deb | head -1)
+          # 依赖在 electron-builder.yml 里已写成纯包名，这里仍做一次去约束处理以防日后被改回带版本号
+          deps=$(dpkg-deb -f "$f" Depends | sed -E 's/\([^)]*\)//g; s/\|[^,]*//g' | tr ',' ' ' | tr -s ' ')
+          recs=$(dpkg-deb -f "$f" Recommends | sed -E 's/\([^)]*\)//g; s/\|[^,]*//g' | tr ',' ' ' | tr -s ' ')
+          echo "在 Ubuntu 20.04 基线上校验依赖：$deps"
+          docker run --rm ubuntu:20.04 bash -c "
+            set -e
+            apt-get update -qq || {
+              echo 'archive 源不可用，回退 old-releases'
+              sed -i 's|archive.ubuntu.com|old-releases.ubuntu.com|g; s|security.ubuntu.com|old-releases.ubuntu.com|g' /etc/apt/sources.list
+              apt-get update -qq
+            }
+            DEBIAN_FRONTEND=noninteractive apt-get install -y --simulate $deps > /dev/null
+            echo 'Depends 在 Ubuntu 20.04（麒麟 V10 SP1 桌面版）基线上可解析'
+            if [ -n '$recs' ]; then
+              if DEBIAN_FRONTEND=noninteractive apt-get install -y --simulate $recs > /dev/null 2>&1; then
+                echo 'Recommends 可解析'
+              else
+                echo '::warning::Recommends 在 20.04 基线上不可解析（仅提示，不影响安装）'
+              fi
+            fi
+          "
+
+      - name: Upload artifacts
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: ${{ matrix.id }}
+          path: ${{ matrix.artifact_paths }}
+          if-no-files-found: warn
+          retention-days: 14
+
+  # ============================================================
+  # 汇总发布：仅 tag 触发，创建 GitHub Release 并挂上各平台安装包
+  # （R2 自动更新链路不受影响，仍由 electron-builder 发布）
+  # ============================================================
+  publish-release:
+    name: Publish GitHub Release
+    needs: [build]
+    if: startsWith(github.ref, 'refs/tags/v')
+    runs-on: ubuntu-latest
+    permissions:
+      contents: write
+    steps:
+      - name: Download all artifacts
+        uses: actions/download-artifact@v4
+        with:
+          path: artifacts
+          # 不合并目录：同名文件（如各架构各自的 latest-*.yml）分属不同子目录，避免互相覆盖
+          merge-multiple: false
+
+      - name: Create GitHub Release
+        uses: softprops/action-gh-release@v2
+        with:
+          # 只挂用户真正要下载的安装包。latest-*.yml 是 electron-updater 的差分更新元数据，
+          # 各架构同名且各自只含本架构，挂到 Release 上既是噪音也可能被误用（由 R2 承担）。
+          files: |
+            artifacts/**/*.exe
+            artifacts/**/*.deb
+            artifacts/**/*.dmg
+          draft: false
+          prerelease: false
+          generate_release_notes: true
+          fail_on_unmatched_files: false
