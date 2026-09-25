@@ -4,7 +4,7 @@ import { truncate } from 'lodash'
 import platform from '@/platform'
 import { getExtensionSettings, getLanguage, getLicenseKey } from '@/stores/settingActions'
 import { ChatboxAIAPIError } from '../../../shared/models/errors'
-import type WebSearch from './base'
+import WebSearch, { DEFAULT_CONTEXT_SNIPPET_MAX_LENGTH } from './base'
 import { BingSearch } from './bing'
 import { BingNewsSearch } from './bing-news'
 import { BochaSearch } from './bocha'
@@ -79,6 +79,20 @@ function getSearchProviders() {
   return selectedProviders
 }
 
+/**
+ * Providers whose results carry complete excerpts declare `contextSnippetMaxLength = null`
+ * and keep the whole snippet; everyone else is trimmed to the default budget.
+ * Anything that isn't an explicit `null` or a number (e.g. provider doubles in tests) also
+ * falls back to the default budget, so the context can never grow unbounded by accident.
+ */
+function toContextSnippet(snippet: string, provider: WebSearch): string {
+  const configured = provider.contextSnippetMaxLength
+  const maxLength =
+    configured === null ? null : typeof configured === 'number' ? configured : DEFAULT_CONTEXT_SNIPPET_MAX_LENGTH
+  if (maxLength === null) return snippet
+  return truncate(snippet, { length: maxLength })
+}
+
 async function _searchRelatedResults(query: string, signal?: AbortSignal) {
   const providers = getSearchProviders()
   const results = await Promise.all(
@@ -86,7 +100,7 @@ async function _searchRelatedResults(query: string, signal?: AbortSignal) {
       try {
         const result = await provider.search(query, signal)
         console.debug(`web search result for "${query}":`, result.items)
-        return { result }
+        return { provider, result }
       } catch (err) {
         console.error(err)
         return { error: err }
@@ -94,24 +108,25 @@ async function _searchRelatedResults(query: string, signal?: AbortSignal) {
     })
   )
 
-  const successfulResults = results.flatMap((entry) => (entry.result ? [entry.result] : []))
+  const successfulResults = results.flatMap((entry) =>
+    entry.result ? [{ provider: entry.provider, result: entry.result }] : []
+  )
   if (successfulResults.length === 0) {
     throw results[0]?.error ?? new Error('Web search failed')
   }
 
-  const items: SearchResultItem[] = []
+  const items: { provider: WebSearch; item: SearchResultItem }[] = []
 
   // add items in turn
   let i = 0
   let hasMore = false
   do {
     hasMore = false
-    for (const result of successfulResults) {
+    for (const { provider, result } of successfulResults) {
       const item = result.items[i]
       if (item) {
         hasMore = true
-        items.push(item)
-      } else {
+        items.push({ provider, item })
       }
     }
     i++
@@ -119,10 +134,10 @@ async function _searchRelatedResults(query: string, signal?: AbortSignal) {
 
   console.debug('web search items', items)
 
-  return items.map((item) => ({
-    title: item.title,
-    snippet: truncate(item.snippet, { length: 150 }),
-    link: item.link,
+  // 结果原样带进上下文（含提供方协议里的附加字段），只按提供方预算裁剪 snippet
+  return items.map(({ provider, item }) => ({
+    ...item,
+    snippet: toContextSnippet(item.snippet, provider),
   }))
 }
 
@@ -149,7 +164,7 @@ export const webSearchExecutor = async (
  * Single source of truth: which configured providers offer the parse_link tool.
  * Keep in sync with the provider classes' `supportsParseLink` flags.
  */
-export const PROVIDERS_WITH_PARSE_LINK: ReadonlySet<string> = new Set(['build-in', 'tavily'])
+export const PROVIDERS_WITH_PARSE_LINK: ReadonlySet<string> = new Set(['build-in', 'tavily', 'searxng'])
 
 /**
  * Returns the first configured search provider that supports parseLink.

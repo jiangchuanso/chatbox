@@ -76,10 +76,19 @@ Web Search 采用抽象基类模式（`src/renderer/packages/web-search/base.ts`
 | Tavily | `tavily.ts` | ✓ | ✓（调用 `/extract`） | 高质量 AI 搜索，需用户自备 API Key |
 | BoCha | `bocha.ts` | ✓ | ✗ | 国内搜索 API |
 | Querit | `querit.ts` | ✓ | ✗ | 多源聚合搜索 |
+| SearXNG | `searxng.ts` | ✓ | ✓（实例 `/api/file-text`，普通网页退化为抓取正文） | 自托管，实例地址可指向 SearXNG 或 SearXNG 兼容实例 |
 
 每个供应商通过 `supportsParseLink` 实例标志声明自己是否实现了 `parseLink`。基类默认返回 `false`，需要的子类用 `override supportsParseLink = true` 显式声明。
 
 基类还封装了跨平台的 HTTP 请求能力：移动端通过 Capacitor HTTP 插件发起请求（绕过 CORS 限制），桌面端和 Web 端使用 `ofetch`。
+
+### SearXNG 兼容实例（如自建文件搜索）
+
+`searxng.ts` 按 SearXNG JSON 协议解析 `results[]`：`title` / `url` 作为标题与链接，`content`（无则退回 `snippet`）作为摘要。除标准字段外，兼容实例（例如基于 Tantivy 的自建文件搜索）还会返回 `file_type` / `file_size` / `file_id` / `snippet_count`，这些字段会被原样透传进结果条目（`fileType` / `fileSize` / `fileId` / `snippetCount`），并由 `web_search` 的模型输出渲染成一行 `Source:` 说明，供模型判断来源。
+
+这类实例的 `results[].url` 指向文档下载地址（`/uploads/<相对路径>`），因此 `parseLink` 走实例正文接口 `/api/file-text/<相对路径>`（返回 `{file_id, filename, paragraphs}`，`paragraphs` 合并为正文，`filename` 作为标题）；URL 不属于该实例时退化为抓取 HTML 并做基础正文抽取，非 HTML（PDF/二进制）返回 `null`、由工具层报 `parse_link_failed`。
+
+`content` 默认包含全部命中段落（不截断），`snippet` 因此不再被摘要预算压缩：`contextSnippetMaxLength` 在基类默认 150 字符，`SearxngSearch` 覆写为 `null`（不限长），使全文段落直接作为上文。
 
 ### parse_link 能力的双源一致性
 
@@ -94,7 +103,7 @@ Web Search 采用抽象基类模式（`src/renderer/packages/web-search/base.ts`
 1. **供应商选择**：根据用户设置（`extensionSettings.webSearch.provider`）动态实例化搜索供应商
 2. **并行搜索**：同时调用所有选中的供应商，结果交替合并（round-robin），确保多源覆盖
 3. **结果缓存**：使用 5 分钟 TTL 缓存（`cachified`），避免重复搜索相同查询
-4. **结果截断**：最多返回 10 条结果，每条摘要截断至 150 字符，控制上下文窗口消耗
+4. **结果截断**：最多返回 10 条结果；每条摘要按提供方的 `contextSnippetMaxLength` 裁剪（默认 150 字符），声明为 `null` 的提供方（如 SearXNG 兼容实例）保留完整摘要。结果条目里的其它协议字段原样带入上下文
 
 ## Tool 系统（内置工具集）
 
@@ -141,6 +150,7 @@ Web Search 采用抽象基类模式（`src/renderer/packages/web-search/base.ts`
 |--------|---------|---------|
 | `build-in` (Chatbox AI) | 检查 `licenseKey` → 调用 `remote.parseUserLinkPro` | 缺 license 抛 `chatbox_search_license_key_required`（后端不限制 tier，任意 license 均可调用） |
 | `tavily` | `getParseLinkProvider().parseLink()` → Tavily `/extract` API | 缺 API key 抛 `tavily_api_key_required`；提取空抛 `parse_link_failed` |
+| `searxng` | `getParseLinkProvider().parseLink()` → 实例 `/api/file-text/<路径>`，非本实例 URL 退化为 HTML 正文抽取 | 实例未配置抛 `searxng_base_url_required`；取不到正文抛 `parse_link_failed` |
 | 其他（`bing` / `bocha` / `querit`） | 不会注入 `parse_link`，模型看不到此工具 | — |
 
 错误抛出采用 AI/用户双层结构：`Error.message`（传给 `ChatboxAIAPIError` 构造器的第一参数）携带技术原因供 AI 推理（例如 "Tavily extract API returned no results for {url}"），`detail.i18nKey` 则给用户渲染本地化的友好提示。

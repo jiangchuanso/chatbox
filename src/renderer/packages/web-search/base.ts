@@ -17,6 +17,12 @@ export interface ParseLinkResult {
   content: string
 }
 
+/**
+ * Per-result character budget applied when a search result becomes model context.
+ * Providers whose results already carry complete excerpts raise or disable it.
+ */
+export const DEFAULT_CONTEXT_SNIPPET_MAX_LENGTH = 150
+
 function formatHeaders(headers: HeadersInit | undefined): Record<string, string> {
   if (!headers) return {}
 
@@ -42,6 +48,15 @@ abstract class WebSearch {
   abstract search(query: string, signal?: AbortSignal): Promise<SearchResult>
 
   supportsParseLink = false
+
+  /**
+   * Upper bound (characters) applied to each result's `snippet` when the result is
+   * turned into model context. `null` keeps the whole snippet as-is — use it when
+   * results already contain complete excerpts, so the model sees the full evidence
+   * instead of a teaser (e.g. a self-hosted file search that returns every matched
+   * paragraph of every matched document).
+   */
+  contextSnippetMaxLength: number | null = DEFAULT_CONTEXT_SNIPPET_MAX_LENGTH
 
   /**
    * Parse/extract readable content from a URL.

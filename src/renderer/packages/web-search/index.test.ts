@@ -11,9 +11,16 @@ vi.mock('@/stores/settingActions', () => ({
 vi.mock('./bing', () => {
   return {
     BingSearch: class {
-      search = vi.fn().mockResolvedValue({
-        items: [{ title: 'Bing Result', snippet: 'test', link: 'https://example.com' }],
-      })
+      search = vi.fn().mockImplementation(async (query: string) => ({
+        items: [
+          {
+            title: 'Bing Result',
+            // teaser snippets are what the default context budget is designed for
+            snippet: query === 'long snippet query' ? 'b'.repeat(400) : 'test',
+            link: 'https://example.com',
+          },
+        ],
+      }))
     },
   }
 })
@@ -43,9 +50,19 @@ vi.mock('./searxng', async (importOriginal) => {
   return {
     ...actual,
     SearxngSearch: class {
+      // Mirrors the real provider: complete excerpts + optional source metadata.
+      contextSnippetMaxLength = null
       constructor(private readonly baseUrl: string) {}
-      search = vi.fn().mockImplementation(async () => ({
-        items: [{ title: `SearXNG Result ${this.baseUrl}`, snippet: 'test', link: 'https://example.com' }],
+      search = vi.fn().mockImplementation(async (query: string) => ({
+        items: [
+          {
+            title: `SearXNG Result ${this.baseUrl}`,
+            snippet: query === 'full excerpt query' ? 'x'.repeat(400) : 'test',
+            link: 'https://example.com',
+            fileType: 'docx',
+            snippetCount: 2,
+          },
+        ],
       }))
     },
   }
@@ -161,5 +178,31 @@ describe('webSearchExecutor', () => {
     } as ReturnType<typeof getExtensionSettings>)
 
     await expect(webSearchExecutor({ query: 'provider failure' }, {})).rejects.toThrow('Tavily unavailable')
+  })
+
+  it('keeps complete excerpts and source fields for providers that declare them', async () => {
+    mockGetExtensionSettings.mockReturnValue({
+      webSearch: { provider: 'searxng', searxngBaseUrl: 'https://searx.example.com' },
+    } as ReturnType<typeof getExtensionSettings>)
+
+    const result = await webSearchExecutor({ query: 'full excerpt query' }, {})
+
+    expect(result.searchResults[0]).toMatchObject({
+      snippet: 'x'.repeat(400),
+      fileType: 'docx',
+      snippetCount: 2,
+    })
+  })
+
+  it('trims teaser snippets to the default context budget', async () => {
+    mockGetExtensionSettings.mockReturnValue({
+      webSearch: { provider: 'bing', tavilyApiKey: '' },
+    } as ReturnType<typeof getExtensionSettings>)
+
+    const result = await webSearchExecutor({ query: 'long snippet query' }, {})
+
+    // lodash truncate's default omission marker
+    expect(result.searchResults[0].snippet.length).toBeLessThanOrEqual(150)
+    expect(result.searchResults[0].snippet.endsWith('...')).toBe(true)
   })
 })
