@@ -20,14 +20,13 @@ afterSign: .erb/scripts/notarize.js
 # releaseInfo:
 #   releaseNotes: See the changelog for details
 
+# 各平台的 target 不再声明 arch：命令行 --x64 / --arm64 会与配置里的 arch 列表合并，
+# 两个都写会导致每个 job 把另一架构也构建一遍（CI 时间翻倍、同名产物重复）。
+# 架构一律由 CLI 决定，CI 里每个架构用对应的原生 runner 分别构建。
 mac:
   notarize: false
   category: public.app-category.developer-tools
-  target:
-    target: default
-    arch:
-      - arm64
-      - x64
+  target: default
   type: distribution
   hardenedRuntime: true
   entitlements: assets/entitlements.mac.plist
@@ -45,10 +44,7 @@ dmg:
 
 win:
   target:
-    - target: nsis
-      arch:
-        - x64
-        - arm64
+    - nsis
   verifyUpdateCodeSignature: false
   artifactName: ${productName}-${version}-${arch}-Setup.${ext}
   signtoolOptions:
@@ -63,14 +59,8 @@ nsis:
 
 linux:
   target:
-    - target: AppImage
-      arch:
-        - x64
-        - arm64
-    - target: deb
-      arch:
-        - x64
-        - arm64
+    - AppImage
+    - deb
   category: Development
   artifactName: ${productName}-${version}-${arch}.${ext}
 
