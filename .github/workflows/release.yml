@@ -245,12 +245,17 @@ jobs:
               *) echo "::error::$name 文件名与 Architecture=$arch 不一致"; exit 1 ;;
             esac
 
-            if echo "$depends" | tr ',' '\n' | grep -q 't64'; then
+            # 不要把 grep -q 放在管道末尾：它一旦命中就立即退出，上游命令（tar/dpkg-deb）会吃到
+            # SIGPIPE 而非零退出，而 Actions 的 bash 带 -o pipefail，整条管道会被判为失败
+            # （dpkg-deb 侧表现为 "tar: stdout: write error"），从而误报「缺少 chrome-sandbox」。
+            # 这里先把输出落到变量，再用 bash 模式匹配判断。
+            if [[ "$depends" == *t64* ]]; then
               echo "::error::$name 的 Depends 含 *t64 包名，银河麒麟 V10 SP1 / 统信 UOS 无法解析"
               exit 1
             fi
 
-            if ! dpkg-deb -c "$f" | grep -q 'chrome-sandbox'; then
+            contents=$(dpkg-deb -c "$f")
+            if [[ "$contents" != *chrome-sandbox* ]]; then
               echo "::error::$name 缺少 chrome-sandbox，Electron 沙箱无法初始化"
               exit 1
             fi
