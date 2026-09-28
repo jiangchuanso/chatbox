@@ -689,6 +689,8 @@
   "Navigate to the Specific Conversation": "導航至特定對話",
   "network error tips": "發生了網路錯誤。請檢查您目前的網路狀態以及與 {{host}} 的連接。",
   "Network Proxy": "網路代理",
+  "Disable Chatbox Cloud": "停用 Chatbox 雲端服務",
+  "Disable Chatbox Cloud Description": "關閉所有對 Chatbox 雲端（api.chatboxai.app）的存取。僅在完全離線、或僅使用自託管/本地模型的內網環境中開啟。",
   "network proxy error tips": "由於您設定的代理伺服器位址為 {{proxy}}，請驗證代理伺服器是否正常運作，或考慮從設定中移除代理伺服器位址。",
   "New": "新增",
   "New Chat": "新對話",

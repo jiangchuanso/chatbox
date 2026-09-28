@@ -5,6 +5,7 @@ import path from 'path'
 import sanitizeFilename from 'sanitize-filename'
 import * as defaults from '../shared/defaults'
 import type { Config, Settings } from '../shared/types'
+import { setChatboxCloudDisabled } from '@shared/request/chatboxai_pool'
 import { getLogger } from './util'
 
 const logger = getLogger('store-node')
@@ -275,3 +276,16 @@ export async function listStoreBlobKeys() {
   }
   return fs.readdir(dir)
 }
+
+// Keep the offline / disable-Chatbox-cloud flag in sync with settings (and the
+// CHATBOX_OFFLINE env var). When on, all Chatbox-cloud requests short-circuit so
+// an intranet (no public internet) deployment never hangs on TCP timeouts.
+function syncChatboxCloudDisabledFromSettings(): void {
+  const envOff =
+    typeof process !== 'undefined' &&
+    process.env != null &&
+    (process.env.CHATBOX_OFFLINE === '1' || process.env.CHATBOX_OFFLINE === 'true')
+  setChatboxCloudDisabled(envOff || !!getSettings().disableChatboxCloud)
+}
+syncChatboxCloudDisabledFromSettings()
+store.onDidChange('settings', syncChatboxCloudDisabledFromSettings)

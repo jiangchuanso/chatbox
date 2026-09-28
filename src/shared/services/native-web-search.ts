@@ -1,3 +1,5 @@
+import { isChatboxCloudDisabled } from '../request/chatboxai_pool'
+
 /**
  * Native-safe web search for the RN mobile shell.
  *
@@ -286,6 +288,10 @@ async function searchNativeChatbox(
   options: NativeWebSearchOptions
 ): Promise<NativeWebSearchResultItem[]> {
   const fetchFn = options.fetchFn ?? fetch
+  // Offline mode: the Chatbox build-in search backend is unreachable on an intranet.
+  if (isChatboxCloudDisabled()) {
+    throw new Error('Chatbox cloud is disabled (offline mode)')
+  }
   const origin = (options.chatboxApiOrigin?.trim() || CHATBOX_DEFAULT_ORIGIN).replace(/\/+$/, '')
 
   const response = await fetchFn(`${origin}/api/tool/web-search`, {

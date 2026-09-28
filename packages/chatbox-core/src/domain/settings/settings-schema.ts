@@ -587,6 +587,11 @@ export const SettingsSchema = GlobalSessionSettingsSchema.extend({
   autoUpdate: z.boolean().default(true), // 是否自动检查更新
   betaUpdate: z.boolean().default(false), // 是否自动检查 beta 更新
 
+  // When true, all requests to Chatbox cloud (api.chatboxai.app, chatboxai.app, …)
+  // short-circuit immediately instead of hanging on TCP timeouts. For intranet
+  // (no public internet) deployments that only use self-hosted/local models.
+  disableChatboxCloud: z.boolean().optional().catch(undefined),
+
   shortcuts: ShortcutSettingSchema,
 
   // Persistent agent memory feature switch. Undefined means enabled; when off,

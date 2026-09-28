@@ -10,6 +10,7 @@ import type { DocumentParserConfig } from '@shared/types/settings'
 import { getLogger } from '@/lib/utils'
 import platform from '@/platform'
 import { settingsService, settingsStore } from '@/settings-runtime'
+import { setChatboxCloudDisabled } from '@shared/request/chatboxai_pool'
 import { mergeProviderSettings, type ProviderSettingsUpdate } from './providerSettings'
 
 const log = getLogger('settings-store')
@@ -32,6 +33,9 @@ export function initSettingsStore() {
       .hydrate()
       .then(() => {
         const state = settingsStore.getState()
+        // Sync the offline/disable-Chatbox-cloud flag into the shared request layer.
+        setChatboxCloudDisabled(!!state.disableChatboxCloud)
+        settingsStore.subscribe((s) => setChatboxCloudDisabled(!!s.disableChatboxCloud))
         const providers = state.providers
         const providersCount =
           providers && typeof providers === 'object' && !Array.isArray(providers) ? Object.keys(providers).length : 0

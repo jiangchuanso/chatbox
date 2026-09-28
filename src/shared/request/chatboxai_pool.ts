@@ -11,6 +11,48 @@ let POOL = [
   'https://api.chatboxapp.xyz',
 ]
 
+/**
+ * Offline / disable-Chatbox-cloud mode.
+ *
+ * When enabled, every request targeting a Chatbox cloud domain short-circuits
+ * immediately instead of hanging on a TCP timeout (tens of seconds, ×retry) in an
+ * intranet (no public internet) environment. This eliminates the long spinner
+ * before the first token that is caused by `api.chatboxai.app` calls such as
+ * session-attachment RAG config, link parsing and the API-origin liveness probe.
+ *
+ * Driven by the `disableChatboxCloud` setting (synced from both the renderer and
+ * the main process) and/or the `CHATBOX_OFFLINE` env var (`1` / `true`).
+ */
+const chatboxCloudDisabledFromEnv =
+  typeof process !== 'undefined' &&
+  process.env != null &&
+  (process.env.CHATBOX_OFFLINE === '1' || process.env.CHATBOX_OFFLINE === 'true')
+
+let chatboxCloudDisabled = chatboxCloudDisabledFromEnv
+
+export function setChatboxCloudDisabled(value: boolean): void {
+  chatboxCloudDisabled = value
+}
+
+export function isChatboxCloudDisabled(): boolean {
+  return chatboxCloudDisabled
+}
+
+const CHATBOX_CLOUD_HOSTS = [
+  'api.chatboxai.app',
+  'chatboxai.app',
+  'cors-proxy.chatboxai.app',
+  'api.ai-chatbox.com',
+  'api.chatboxapp.xyz',
+  'api.chatboxai.com',
+]
+
+/** True for any request targeting a Chatbox cloud domain. */
+export function isChatboxCloudRequest(input: RequestInfo | URL): boolean {
+  const url = typeof input === 'string' ? input : (input as Request).url ?? input.toString()
+  return CHATBOX_CLOUD_HOSTS.some((host) => url.includes(host))
+}
+
 export function isChatboxAPI(input: RequestInfo | URL) {
   const url = typeof input === 'string' ? input : ((input as Request).url ?? input.toString())
   return POOL.some((o) => url.startsWith(o)) || url.startsWith(getChatboxAPIOrigin())
@@ -34,6 +76,11 @@ export function getChatboxAPIOrigin() {
  * 在测试过程中，会根据服务器返回添加新的 API 域名，并缓存到本地
  */
 export async function testApiOrigins() {
+  // Offline mode: skip the liveness probe entirely and keep using the default pool.
+  if (isChatboxCloudDisabled()) {
+    return POOL
+  }
+
   // 按顺序测试 API 的可用性
   const result = await cache(
     'api_origins',

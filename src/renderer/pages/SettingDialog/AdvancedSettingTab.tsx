@@ -59,6 +59,24 @@ export default function AdvancedSettingTab(props: Props) {
               platform.type === 'web' ? <span className="text-red-600">{t('not available in browser')}</span> : null
             }
           />
+          <Box className="mt-2">
+            <FormGroup>
+              <FormControlLabel
+                control={<Switch />}
+                label={t('Disable Chatbox Cloud')}
+                checked={!!settingsEdit.disableChatboxCloud}
+                onChange={(e, checked) =>
+                  setSettingsEdit({
+                    ...settingsEdit,
+                    disableChatboxCloud: checked,
+                  })
+                }
+              />
+              <Typography variant="caption" color="textSecondary">
+                {t('Disable Chatbox Cloud Description')}
+              </Typography>
+            </FormGroup>
+          </Box>
         </AccordionDetails>
       </Accordion>
       {platform.type !== 'mobile' && (

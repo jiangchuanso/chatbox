@@ -1,6 +1,6 @@
 import { ApiError, BaseError, ChatboxAIAPIError, NetworkError } from '../models/errors'
 import { parseJsonOrEmpty } from '../utils/json_utils'
-import { isChatboxAPI } from './chatboxai_pool'
+import { isChatboxAPI, isChatboxCloudDisabled, isChatboxCloudRequest } from './chatboxai_pool'
 
 interface PlatformInfo {
   type: string
@@ -111,6 +111,11 @@ export function createAfetch(
     const retry = options.retry || 0
     for (let i = 0; i < retry + 1; i++) {
       try {
+        // Offline mode: fail Chatbox-cloud requests immediately instead of
+        // hanging on a TCP timeout in an intranet (no public internet) environment.
+        if (isChatboxCloudRequest(url) && isChatboxCloudDisabled()) {
+          throw new NetworkError('Chatbox cloud is disabled (offline mode)', getRequestOrigin(url))
+        }
         if (isChatboxAPI(url)) {
           init = {
             ...init,
@@ -259,6 +264,11 @@ export function createAuthenticatedAfetch(config: AuthenticatedAfetchConfig) {
 
     for (let i = 0; i < retry + 1; i++) {
       try {
+        // Offline mode: fail Chatbox-cloud requests immediately instead of
+        // hanging on a TCP timeout in an intranet (no public internet) environment.
+        if (isChatboxCloudRequest(url) && isChatboxCloudDisabled()) {
+          throw new NetworkError('Chatbox cloud is disabled (offline mode)', getRequestOrigin(url))
+        }
         const res = await fetch(url, init)
 
         // 检查 401 Unauthorized

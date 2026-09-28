@@ -689,6 +689,8 @@
   "Navigate to the Specific Conversation": "跳转到第N个会话",
   "network error tips": "网络错误。请检查当前的网络状态，以及与 {{host}} 的连接情况。",
   "Network Proxy": "网络代理",
+  "Disable Chatbox Cloud": "禁用 Chatbox 云服务",
+  "Disable Chatbox Cloud Description": "关闭所有对 Chatbox 云（api.chatboxai.app）的访问。仅在完全离线、或仅使用自托管/本地模型的内网环境中开启。",
   "network proxy error tips": "因为你设置了代理地址 {{proxy}}，请检查代理服务器是否正常工作，或者考虑在设置中删除代理地址。",
   "New": "新建",
   "New Chat": "新对话",

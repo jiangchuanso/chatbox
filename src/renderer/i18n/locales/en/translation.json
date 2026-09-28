@@ -689,6 +689,8 @@
   "Navigate to the Specific Conversation": "Navigate to the Specific Conversation",
   "network error tips": "A network error has occurred. Please check your current network status and the connection with {{host}}.",
   "Network Proxy": "Network Proxy",
+  "Disable Chatbox Cloud": "Disable Chatbox Cloud",
+  "Disable Chatbox Cloud Description": "Disable all requests to Chatbox cloud (api.chatboxai.app). Enable this when running fully offline or on an intranet that only uses self-hosted or local models.",
   "network proxy error tips": "Due to the proxy address you have configured as {{proxy}}, please verify if the proxy server is functioning properly, or consider removing the proxy address from the settings.",
   "New": "New",
   "New Chat": "New Chat",
