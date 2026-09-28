@@ -3,6 +3,7 @@ import { ipcMain } from 'electron'
 import { autoUpdater } from 'electron-updater'
 import { getQuitAndInstallArguments } from './installer-command'
 import { getSettings } from './store-node'
+import { isChatboxCloudDisabled } from '@shared/request/chatboxai_pool'
 import { getLogger } from './util'
 
 const log = getLogger('app-updater')
@@ -100,6 +101,10 @@ export class AppUpdater {
 
     this.isChecking = true
     try {
+      // Offline mode: skip the update check entirely (all feed URLs are Chatbox cloud).
+      if (isChatboxCloudDisabled()) {
+        return null
+      }
       const feedUrls = [
         'https://chatboxai.app/api/auto_upgrade',
         'https://api.chatboxai.app/api/auto_upgrade',

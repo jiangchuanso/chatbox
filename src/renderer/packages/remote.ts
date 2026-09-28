@@ -4,7 +4,7 @@ import {
   type ImageCompletionRequest,
   type ImageGenerationAPIResponse,
 } from '@chatbox/core/application/image-generation'
-import { ofetch } from 'ofetch'
+import { ofetch as ofetchRaw } from 'ofetch'
 import { z } from 'zod'
 import { getLogger } from '@/lib/utils'
 import { type ClaimedAgentModeReward, ClaimFreeAgentModeRewardResponseSchema } from '@/packages/agent-mode-reward'
@@ -34,6 +34,19 @@ import {
   type Settings,
 } from '../../shared/types'
 import { getOS } from './navigator'
+import { isChatboxCloudDisabled } from '../../shared/request/chatboxai_pool'
+
+/**
+ * Chatbox-cloud `ofetch` wrapper. Every Chatbox API call in this module targets
+ * `api.chatboxai.app` / `chatboxai.app`. When offline mode is on, fail fast so an
+ * intranet (no public internet) deployment doesn't hang on TCP timeouts × retry.
+ */
+const chatboxFetch = ((...args: Parameters<typeof ofetchRaw>) => {
+  if (isChatboxCloudDisabled()) {
+    throw new Error('Chatbox cloud is disabled (offline mode)')
+  }
+  return ofetchRaw(...args)
+}) as typeof ofetchRaw
 
 const log = getLogger('remote-api')
 
@@ -213,7 +226,7 @@ export async function recordCopilotUsage(params: {
   id: string
   action: 'create_session' | 'create_thread' | 'create_message' | 'use_copilot'
 }) {
-  await ofetch(`${getAPIOrigin()}/api/system_copilots/record_usage`, {
+  await chatboxFetch(`${getAPIOrigin()}/api/system_copilots/record_usage`, {
     method: 'POST',
     body: {
       ...params,
@@ -223,7 +236,7 @@ export async function recordCopilotUsage(params: {
 }
 
 export async function recordCopilotShare(detail: CopilotDetail) {
-  await ofetch(`${getAPIOrigin()}/api/copilots/share-record`, {
+  await chatboxFetch(`${getAPIOrigin()}/api/copilots/share-record`, {
     method: 'POST',
     body: {
       detail: detail,

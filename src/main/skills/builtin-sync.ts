@@ -7,6 +7,7 @@ import { getLogger } from '../util'
 import { builtinSkills } from './builtin'
 import { parseSkillFile } from './parser'
 import { isValidSkillName } from './validation'
+import { isChatboxCloudDisabled } from '@shared/request/chatboxai_pool'
 
 const log = getLogger('skills:builtin-sync')
 
@@ -288,6 +289,11 @@ function buildMetadataFromDetail(detail: RemoteSkillDetail): SkillMetadata {
  */
 export async function syncBuiltinSkills(lang?: string): Promise<boolean> {
   ensureBuiltinSeeded()
+
+  // Offline mode: keep only the locally seeded snapshot, don't probe Chatbox cloud.
+  if (isChatboxCloudDisabled()) {
+    return false
+  }
 
   const origin = getApiOrigin()
   const langQuery = lang ? `?lang=${encodeURIComponent(lang)}` : ''

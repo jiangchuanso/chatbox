@@ -1,3 +1,5 @@
+import { isChatboxCloudDisabled } from '../request/chatboxai_pool'
+
 /**
  * Content reporting (`POST /api/report_content`) with injectable origin/fetch/headers.
  * Used directly by the RN mobile shell, and by the renderer through
@@ -17,6 +19,10 @@ export interface ReportNativeContentOptions {
 
 export async function reportNativeContent(options: ReportNativeContentOptions): Promise<void> {
   const fetchFn = options.fetchFn ?? fetch
+  // Offline mode: skip telemetry rather than hanging on a TCP timeout.
+  if (isChatboxCloudDisabled()) {
+    return
+  }
   const origin = (options.apiOrigin?.trim() || CHATBOX_DEFAULT_ORIGIN).replace(/\/+$/, '')
   const response = await fetchFn(`${origin}/api/report_content`, {
     method: 'POST',
