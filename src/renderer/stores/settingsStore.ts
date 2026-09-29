@@ -34,8 +34,16 @@ export function initSettingsStore() {
       .then(() => {
         const state = settingsStore.getState()
         // Sync the offline/disable-Chatbox-cloud flag into the shared request layer.
-        setChatboxCloudDisabled(!!state.disableChatboxCloud)
-        settingsStore.subscribe((s) => setChatboxCloudDisabled(!!s.disableChatboxCloud))
+        // The CHATBOX_OFFLINE env var must take precedence over the stored setting so an
+        // intranet deployment that launches with CHATBOX_OFFLINE=1 cannot be silently
+        // re-enabled by a setting of `disableChatboxCloud: false` (the conversation runs
+        // in the renderer, so this is what actually gates Chatbox-cloud requests there).
+        const envOff =
+          typeof process !== 'undefined' &&
+          process.env != null &&
+          (process.env.CHATBOX_OFFLINE === '1' || process.env.CHATBOX_OFFLINE === 'true')
+        setChatboxCloudDisabled(envOff || !!state.disableChatboxCloud)
+        settingsStore.subscribe((s) => setChatboxCloudDisabled(envOff || !!s.disableChatboxCloud))
         const providers = state.providers
         const providersCount =
           providers && typeof providers === 'object' && !Array.isArray(providers) ? Object.keys(providers).length : 0
