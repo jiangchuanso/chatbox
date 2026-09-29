@@ -150,7 +150,7 @@ export async function checkNeedUpdate(version: string, os: string, config: Confi
     need_update?: boolean
   }
   // const res = await ofetch<Response>(`${RELEASE_ORIGIN}/chatbox_need_update/${version}`, {
-  const res = await ofetch<Response>(`${getAPIOrigin()}/chatbox_need_update/${version}`, {
+  const res = await chatboxFetch<Response>(`${getAPIOrigin()}/chatbox_need_update/${version}`, {
     method: 'POST',
     retry: 3,
     body: {
@@ -188,7 +188,7 @@ export async function listCopilotTags(lang: string) {
   type Response = {
     data: string[]
   }
-  const res = await ofetch<Response>(`${getAPIOrigin()}/api/system_copilots/tags/${lang}`, {
+  const res = await chatboxFetch<Response>(`${getAPIOrigin()}/api/system_copilots/tags/${lang}`, {
     method: 'GET',
     retry: 3,
   })
@@ -208,7 +208,7 @@ export async function listCopilotsByCursor(
     data: CopilotDetail[]
     next_cursor: string | null
   }
-  const res = await ofetch<Response>(`${getAPIOrigin()}/api/system_copilots/list`, {
+  const res = await chatboxFetch<Response>(`${getAPIOrigin()}/api/system_copilots/list`, {
     method: 'POST',
     retry: 3,
     body: { lang, ...filters },
@@ -246,7 +246,7 @@ export async function getPremiumPrice() {
       discountLabel: string
     }
   }
-  const res = await ofetch<Response>(`${getAPIOrigin()}/api/premium/price`, {
+  const res = await chatboxFetch<Response>(`${getAPIOrigin()}/api/premium/price`, {
     retry: 3,
   })
   return res.data
@@ -256,7 +256,7 @@ export async function getRemoteConfig(config: keyof RemoteConfig) {
   type Response = {
     data: Pick<RemoteConfig, typeof config>
   }
-  const res = await ofetch<Response>(`${getAPIOrigin()}/api/remote_config/${config}`, {
+  const res = await chatboxFetch<Response>(`${getAPIOrigin()}/api/remote_config/${config}`, {
     retry: 3,
     headers: await getChatboxHeaders(),
   })
@@ -294,7 +294,7 @@ export async function getSessionRagConfig(params?: { licenseKey?: string }) {
 
   const promise = (async () => {
     const headers = await getChatboxHeaders()
-    const res = await ofetch<Response>(`${getAPIOrigin()}/api/session_rag/config`, {
+    const res = await chatboxFetch<Response>(`${getAPIOrigin()}/api/session_rag/config`, {
       retry: 3,
       headers: {
         ...(params?.licenseKey ? { Authorization: `Bearer ${params.licenseKey}` } : {}),
@@ -343,7 +343,7 @@ export async function getDialogConfig(params: { uuid: string; language: string; 
   type Response = {
     data: null | DialogConfig
   }
-  const res = await ofetch<Response>(`${getAPIOrigin()}/api/dialog_config`, {
+  const res = await chatboxFetch<Response>(`${getAPIOrigin()}/api/dialog_config`, {
     method: 'POST',
     retry: 3,
     body: params,
@@ -356,7 +356,7 @@ export async function getLicenseDetail(params: { licenseKey: string }) {
   type Response = {
     data: ChatboxAILicenseDetail | null
   }
-  const res = await ofetch<Response>(`${getAPIOrigin()}/api/license/detail`, {
+  const res = await chatboxFetch<Response>(`${getAPIOrigin()}/api/license/detail`, {
     retry: 3,
     headers: {
       Authorization: params.licenseKey,
@@ -386,7 +386,7 @@ export async function getLicenseDetailRealtime(params: { licenseKey: string }): 
   // 用于捕获错误响应体
   let capturedError: LicenseDetailError | undefined
   try {
-    const res = await ofetch<Response>(`${getAPIOrigin()}/api/license/detail/realtime`, {
+    const res = await chatboxFetch<Response>(`${getAPIOrigin()}/api/license/detail/realtime`, {
       retry: 5,
       headers: {
         Authorization: params.licenseKey,

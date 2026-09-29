@@ -590,7 +590,7 @@ export const SettingsSchema = GlobalSessionSettingsSchema.extend({
   // When true, all requests to Chatbox cloud (api.chatboxai.app, chatboxai.app, …)
   // short-circuit immediately instead of hanging on TCP timeouts. For intranet
   // (no public internet) deployments that only use self-hosted/local models.
-  disableChatboxCloud: z.boolean().optional().catch(undefined),
+  disableChatboxCloud: z.boolean().default(true).catch(true),
 
   shortcuts: ShortcutSettingSchema,
 
