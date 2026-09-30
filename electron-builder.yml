@@ -63,6 +63,19 @@ linux:
     - deb
   category: Development
   artifactName: ${productName}-${version}-${arch}.${ext}
+  # 图标显式指定文件，不走 buildResources 目录探测：探测不到时 electron-builder 会静默
+  # 退回 Electron 自带图标，deb 里就没有应用图标（麒麟开始菜单显示空白/通用图标）。
+  # 源文件是 1024x1024，electron-builder 会据此生成 16~512 各尺寸装进 hicolor 主题。
+  icon: assets/icon.png
+  desktop:
+    entry:
+      # Linux 桌面靠 WM_CLASS 把「运行中的窗口」和 desktop 文件配对，配不上任务栏就显示通用图标。
+      # electron-builder 默认写的是 productName（Chatbox），但 Electron 实际设置的 WM_CLASS
+      # 来自应用自己的 package.json（release/app/package.json 的 name/productName
+      # = xyz.chatboxapp.ce，与 npm 包名一致），两者不一致，所以这里显式改写。
+      # 同理不要为了「命令名好看」去改 linux.executableName：改了它，Chromium 回退使用的
+      # 程序名也会跟着变，又会和 StartupWMClass 对不上。
+      StartupWMClass: xyz.chatboxapp.ce
 
 # deb 目标：银河麒麟 V10 SP1 桌面版（Ubuntu 20.04 基线 / glibc 2.31）等信创 Debian 系系统。
 #
