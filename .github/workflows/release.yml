@@ -260,39 +260,118 @@ jobs:
               exit 1
             fi
 
-            echo "::notice::$name Architecture=$arch Depends=$depends Recommends=$recommends"
+            # ---- desktop entry + 图标：麒麟开始菜单与任务栏的图标都取决于这两项 ----
+            root=$(mktemp -d)
+            dpkg-deb -x "$f" "$root"
+
+            desktop_files=("$root"/usr/share/applications/*.desktop)
+            if [ ${#desktop_files[@]} -eq 0 ]; then
+              echo "::error::$name 包内没有 /usr/share/applications/*.desktop"
+              exit 1
+            fi
+            desktop=${desktop_files[0]}
+            echo "::group::$(basename "$desktop")"
+            cat "$desktop"
+            echo "::endgroup::"
+
+            # grep 没匹配到会返回 1，在 -e 下会直接终止，所以都要带 || true
+            icon_name=$(grep -m1 '^Icon=' "$desktop" | cut -d= -f2- || true)
+            wm_class=$(grep -m1 '^StartupWMClass=' "$desktop" | cut -d= -f2- || true)
+            exec_bin=$(grep -m1 '^Exec=' "$desktop" | cut -d= -f2- | awk '{print $1}' | tr -d '"' || true)
+
+            # Icon= 写的是图标名，包内 hicolor 主题下必须有同名 png，否则开始菜单显示空白/通用图标
+            icon_hits=$(find "$root/usr/share/icons/hicolor" -path "*/apps/$icon_name.png" 2>/dev/null | wc -l)
+            if [ "$icon_hits" -eq 0 ]; then
+              echo "::error::$name 的 Icon=$icon_name 在 /usr/share/icons/hicolor 下没有对应 png"
+              find "$root/usr/share/icons" -type f 2>/dev/null | head -20 || true
+              exit 1
+            fi
+
+            if [ ! -f "$root$exec_bin" ]; then
+              echo "::error::$name 的 Exec 指向的 $exec_bin 不在包内"
+              exit 1
+            fi
+
+            if [ -z "$wm_class" ]; then
+              echo "::error::$name 的 desktop 文件缺少 StartupWMClass，UKUI 任务栏无法把窗口和图标配对"
+              exit 1
+            fi
+
+            echo "::notice::$name Architecture=$arch Depends=$depends Recommends=$recommends Icon=$icon_name($icon_hits 个尺寸) StartupWMClass=$wm_class Exec=$exec_bin"
           done
 
-      - name: Verify deb deps on Ubuntu 20.04 baseline (Kylin V10 SP1 desktop)
+      - name: Verify deb on Ubuntu 20.04 baseline (Kylin V10 SP1 desktop)
         # 麒麟 V10 SP1 桌面版即 Ubuntu 20.04 基线（glibc 2.31），也正是 Electron 预编译二进制的
-        # 构建基线。这里用 ubuntu:20.04 容器对 deb 的 Depends / Recommends 做 apt 模拟安装，
-        # 确认它们在目标基线上能被解析——即「在麒麟上装得上」的机器验证。
-        # 依赖与架构无关，只在 linux-x64 上跑一次即可。
+        # 构建基线。这里在 ubuntu:20.04 容器里真装一遍 deb，再做三层校验：
+        #   1) ldd：主程序与所有 .so/.node 的动态库都能解析（对应「装得上、起得来」）
+        #   2) glibc 符号版本：任何 ELF 需要的最高 GLIBC 不超过 2.31（超过在麒麟上直接起不来）
+        #   3) Xvfb 下冒烟启动：确认不是缺库导致的秒退
+        # 依赖/ELF 与架构有关，这里只在 linux-x64 上跑一次（arm64 包内的原生模块同理，
+        # 但容器侧只有 x64 镜像可直接验证）。
         if: matrix.os == 'linux' && matrix.arch == 'x64'
         shell: bash
         run: |
-          f=$(ls release/build/*.deb | head -1)
-          # 依赖在 electron-builder.yml 里已写成纯包名，这里仍做一次去约束处理以防日后被改回带版本号
-          deps=$(dpkg-deb -f "$f" Depends | sed -E 's/\([^)]*\)//g; s/\|[^,]*//g' | tr ',' ' ' | tr -s ' ')
-          recs=$(dpkg-deb -f "$f" Recommends | sed -E 's/\([^)]*\)//g; s/\|[^,]*//g' | tr ',' ' ' | tr -s ' ')
-          echo "在 Ubuntu 20.04 基线上校验依赖：$deps"
-          docker run --rm ubuntu:20.04 bash -c "
-            set -e
+          docker run --rm -v "$PWD/release/build:/pkg:ro" ubuntu:20.04 bash -c '
+            set -eo pipefail
             apt-get update -qq || {
-              echo 'archive 源不可用，回退 old-releases'
-              sed -i 's|archive.ubuntu.com|old-releases.ubuntu.com|g; s|security.ubuntu.com|old-releases.ubuntu.com|g' /etc/apt/sources.list
+              echo "archive 源不可用，回退 old-releases"
+              sed -i "s|archive.ubuntu.com|old-releases.ubuntu.com|g; s|security.ubuntu.com|old-releases.ubuntu.com|g" /etc/apt/sources.list
               apt-get update -qq
             }
-            DEBIAN_FRONTEND=noninteractive apt-get install -y --simulate $deps > /dev/null
-            echo 'Depends 在 Ubuntu 20.04（麒麟 V10 SP1 桌面版）基线上可解析'
-            if [ -n '$recs' ]; then
-              if DEBIAN_FRONTEND=noninteractive apt-get install -y --simulate $recs > /dev/null 2>&1; then
-                echo 'Recommends 可解析'
-              else
-                echo '::warning::Recommends 在 20.04 基线上不可解析（仅提示，不影响安装）'
-              fi
+            export DEBIAN_FRONTEND=noninteractive
+            apt-get install -y --no-install-recommends xvfb binutils > /dev/null
+
+            echo "== 安装 deb（apt 会自动补上 Depends）=="
+            apt-get install -y /pkg/*.deb 2>&1 | tail -5
+
+            desktop=$(ls /usr/share/applications/*.desktop | head -1)
+            app_bin=$(grep -m1 "^Exec=" "$desktop" | cut -d= -f2- | awk "{print \$1}" | tr -d "\"")
+            echo "应用可执行文件：$app_bin"
+
+            echo "== ldd：动态库是否都能解析 =="
+            if ldd "$app_bin" | grep "not found"; then
+              echo "::error::$app_bin 有无法解析的动态库"
+              exit 1
             fi
-          "
+            for lib in $(find /opt -type f \( -name "*.so*" -o -name "*.node" \)); do
+              if ldd "$lib" 2>/dev/null | grep -q "not found"; then
+                echo "::error::$lib 依赖缺失"
+                ldd "$lib" | grep "not found"
+                exit 1
+              fi
+            done
+            echo "动态库全部可解析"
+
+            echo "== glibc 符号版本（麒麟 V10 SP1 桌面版 = 2.31）=="
+            max_v=0
+            for elf in $(find /opt -type f -exec sh -c "head -c 4 \"\$1\" | grep -aq ELF" _ {} \; -print); do
+              v=$(objdump -T "$elf" 2>/dev/null | grep -oE "GLIBC_[0-9]+(\.[0-9]+)+" | sed "s/GLIBC_//" | sort -V | tail -1 || true)
+              if [ -n "$v" ]; then
+                max_v=$(printf "%s\n%s\n" "$max_v" "$v" | sort -V | tail -1)
+              fi
+            done
+            echo "最高 glibc 需求：GLIBC_$max_v"
+            if [ "$(printf "%s\n2.31\n" "$max_v" | sort -V | tail -1)" != "2.31" ]; then
+              echo "::error::需要 GLIBC_$max_v，高于 Ubuntu 20.04 / 麒麟 V10 SP1 桌面版的 2.31"
+              exit 1
+            fi
+
+            echo "== 冒烟启动（Xvfb；docker 里是 root，故加 --no-sandbox）=="
+            log=/tmp/chatbox-start.log
+            set +e
+            xvfb-run -a timeout 30s "$app_bin" --no-sandbox --disable-gpu > "$log" 2>&1
+            rc=$?
+            set -e
+            tail -n 30 "$log" || true
+            if grep -q "error while loading shared libraries" "$log"; then
+              echo "::error::启动时加载动态库失败"
+              exit 1
+            fi
+            if [ "$rc" -ne 0 ] && [ "$rc" -ne 124 ]; then
+              echo "::warning::退出码 $rc（124 = 超时仍在运行属正常；其余需人工看上面的日志确认）"
+            fi
+            echo "Ubuntu 20.04（麒麟 V10 SP1 桌面版）基线：装得上、动态库齐全、可启动"
+          '
 
       - name: Upload artifacts
         if: always()
