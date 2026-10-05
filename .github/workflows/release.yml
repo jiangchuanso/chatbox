@@ -324,16 +324,25 @@ jobs:
             echo "== 安装 deb（apt 会自动补上 Depends）=="
             apt-get install -y /pkg/*.deb 2>&1 | tail -5
 
-            desktop=$(ls /usr/share/applications/*.desktop | head -1)
+            # 优先选 chatbox 的 desktop；避免被其它桌面环境文件抢占 head -1（曾误取到 evolution）
+            desktop=$(ls /usr/share/applications/*.desktop 2>/dev/null | grep -i chatbox | head -1)
+            [ -z "$desktop" ] && desktop=$(ls /usr/share/applications/*.desktop 2>/dev/null | head -1)
+            [ -z "$desktop" ] && { echo "::error::未找到任何 .desktop"; exit 1; }
             app_bin=$(grep -m1 "^Exec=" "$desktop" | cut -d= -f2- | awk "{print \$1}" | tr -d "\"")
             echo "应用可执行文件：$app_bin"
 
             echo "== ldd：动态库是否都能解析 =="
-            if ldd "$app_bin" | grep "not found"; then
+            if ldd "$app_bin" 2>/dev/null | grep -q "not found"; then
               echo "::error::$app_bin 有无法解析的动态库"
               exit 1
             fi
             for lib in $(find /opt -type f \( -name "*.so*" -o -name "*.node" \)); do
+              # 跳过 musl 变体：@libsql 等会同时打包 linux-*-gnu 与 linux-*-musl 两套原生模块，
+              # 在 glibc 主机（Ubuntu/麒麟）上只有 gnu 变体会被加载，musl 的 index.node 链接
+              # libc.so（musl 的 libc）必然 not found——这是误报，应跳过。
+              case "$lib" in
+                *-musl*|*musl*) continue ;;
+              esac
               if ldd "$lib" 2>/dev/null | grep -q "not found"; then
                 echo "::error::$lib 依赖缺失"
                 ldd "$lib" | grep "not found"
