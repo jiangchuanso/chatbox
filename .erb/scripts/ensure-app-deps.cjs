@@ -131,13 +131,28 @@ function verifyVersionsMatchPnpmWorkspace(appDir, options = {}) {
   walk(Array.isArray(pnpmList) ? pnpmList[0] : pnpmList)
 
   if (pnpmVersions.size === 0) {
-    // Fail closed: an empty tree means the check saw nothing to compare, which
-    // would silently report every skew as verified. Better to fail the build
-    // than to ship a package with missing runtime dependencies again.
-    throw new Error(
-      '[ensure-app-deps] pnpm list returned no production dependencies — cannot verify version alignment with the pnpm workspace lockfile. ' +
-        'Run `pnpm list --prod --json --lockfile-only` in release/app/ to debug.',
-    )
+    // release/app is not a pnpm workspace importer (pnpm-workspace.yaml only lists
+    // packages/*), so `pnpm list --lockfile-only` returns an empty tree here.
+    // Fall back to comparing the two lockfiles directly: the `packages` section of
+    // the root pnpm-lock.yaml is exactly what electron-builder's pnpm collector uses,
+    // and it does not depend on the state of release/app/node_modules.
+    // Keep failing closed when the lockfile itself yields no versions either.
+    const lockedVersions = readPnpmLockedVersions(path.join(appDir, '..', '..'))
+    if (lockedVersions.size === 0) {
+      throw new Error(
+        '[ensure-app-deps] pnpm list returned no production dependencies — cannot verify version alignment with the pnpm workspace lockfile. ' +
+          'Run `pnpm list --prod --json --lockfile-only` in release/app/ to debug.',
+      )
+    }
+    const lockMismatches = findNpmLockMismatches(appDir, lockedVersions)
+    if (lockMismatches.length > 0) {
+      throw new Error(
+        `[ensure-app-deps] version skew between release/app/package-lock.json and pnpm-lock.yaml:\n${lockMismatches.join('\n')}\n` +
+          'Align the versions (e.g. via "overrides" in release/app/package.json), otherwise the packaged app will silently miss runtime dependencies.',
+      )
+    }
+    console.log('[ensure-app-deps] verified dependency versions against pnpm-lock.yaml (pnpm list returned an empty tree)')
+    return
   }
 
   const npmLock = JSON.parse(fs.readFileSync(path.join(appDir, 'package-lock.json'), 'utf8'))
@@ -165,5 +180,59 @@ function verifyVersionsMatchPnpmWorkspace(appDir, options = {}) {
   console.log('[ensure-app-deps] verified dependency versions match pnpm workspace lockfile')
 }
 
+/**
+ * Read the `packages:` section of the root pnpm-lock.yaml. Keys are `name@version`,
+ * optionally quoted and suffixed with peer dependency contexts, e.g.
+ * `'@scope/pkg@1.2.3(peer@1.0.0)'`. A package can legitimately appear at more than
+ * one version, so collect a set of versions per package name.
+ */
+function readPnpmLockedVersions(projectDir) {
+  const lines = fs.readFileSync(path.join(projectDir, 'pnpm-lock.yaml'), 'utf8').split(/\r?\n/)
+  const start = lines.indexOf('packages:')
+  if (start < 0) return new Map()
+
+  const versions = new Map()
+  for (const line of lines.slice(start + 1)) {
+    if (line && !/^\s/.test(line)) break
+    if (!/^ {2}\S/.test(line)) continue
+
+    const key = line.trim().replace(/:$/, '').replace(/^'|'$/g, '').replace(/\(.*$/, '')
+    const separator = key.lastIndexOf('@')
+    if (separator <= 0) continue
+    const name = key.slice(0, separator)
+    const version = key.slice(separator + 1)
+    if (!/^\d/.test(version)) continue
+
+    if (!versions.has(name)) versions.set(name, new Set())
+    versions.get(name).add(version)
+  }
+  return versions
+}
+
+/**
+ * Compare every production package that npm ci installed in release/app/ with the
+ * versions present in the pnpm workspace lockfile. Packages absent from the pnpm
+ * lockfile are skipped (they cannot be dropped by electron-builder's collector),
+ * and type-only packages are excluded just like in the `pnpm list` path above.
+ */
+function findNpmLockMismatches(appDir, lockedVersions) {
+  const npmLock = JSON.parse(fs.readFileSync(path.join(appDir, 'package-lock.json'), 'utf8'))
+  const marker = 'node_modules/'
+  const mismatches = []
+  for (const [key, pkg] of Object.entries(npmLock.packages || {})) {
+    if (!pkg || !pkg.version) continue
+    const index = key.lastIndexOf(marker)
+    if (index < 0) continue
+    const name = key.slice(index + marker.length)
+    if (name.startsWith('@types/') || name === 'undici-types') continue
+
+    const allowed = lockedVersions.get(name)
+    if (!allowed || allowed.has(pkg.version)) continue
+    mismatches.push(`  ${name}: npm lock ${pkg.version} != pnpm lock [${[...allowed].sort().join(', ')}]`)
+  }
+  return mismatches
+}
+
 exports.verifyVersionsMatchPnpmWorkspace = verifyVersionsMatchPnpmWorkspace
 exports.getProjectRegistry = getProjectRegistry
+exports.readPnpmLockedVersions = readPnpmLockedVersions

@@ -1,14 +1,16 @@
 import fs from 'node:fs'
 import { createRequire } from 'node:module'
+import { fileURLToPath } from 'node:url'
 import { describe, expect, test } from 'vitest'
 
 interface EnsureAppDepsModule {
   getProjectRegistry: (projectDir: string, options?: { readNpmrc?: (projectDir: string) => string }) => string
   verifyVersionsMatchPnpmWorkspace: (appDir: string, options?: { readPnpmList?: (appDir: string) => string }) => void
+  readPnpmLockedVersions: (projectDir: string) => Map<string, Set<string>>
 }
 
 const require = createRequire(import.meta.url)
-const { getProjectRegistry, verifyVersionsMatchPnpmWorkspace } =
+const { getProjectRegistry, verifyVersionsMatchPnpmWorkspace, readPnpmLockedVersions } =
   require('../../.erb/scripts/ensure-app-deps.cjs') as EnsureAppDepsModule
 
 describe('ensure-app-deps registry', () => {
@@ -54,5 +56,23 @@ describe('ensure-app-deps version guard', () => {
         readPnpmList: () => '{invalid',
       })
     ).toThrow('[ensure-app-deps] failed to verify versions against pnpm workspace lockfile:')
+  })
+})
+
+describe('ensure-app-deps lockfile fallback', () => {
+  const repoRoot = fileURLToPath(new URL('../..', import.meta.url))
+  const appDir = fileURLToPath(new URL('../../release/app/', import.meta.url))
+
+  test('reads resolved versions from pnpm-lock.yaml', () => {
+    const versions = readPnpmLockedVersions(repoRoot)
+    expect(versions.get('@libsql/client')).toContain('0.15.15')
+  })
+
+  test('verifies the npm lock against pnpm-lock.yaml when pnpm list returns an empty tree', () => {
+    expect(() =>
+      verifyVersionsMatchPnpmWorkspace(appDir, {
+        readPnpmList: () => '[]',
+      })
+    ).not.toThrow()
   })
 })
