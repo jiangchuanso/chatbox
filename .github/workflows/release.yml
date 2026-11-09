@@ -126,7 +126,10 @@ jobs:
 
           - id: mac-arm64
             label: macOS arm64 (.dmg)
-            runner: macos-14
+            # arm64 原生 runner。macos-14 镜像已于 2026-11-02 退役，旧标签会被解析成
+            # 已下线的 macos-14-arm64-us-default 配置并报 "is not supported"。
+            # 与 mac-x64 的 macos-15-intel 保持同一镜像代际；必要时可换成 macos-26。
+            runner: macos-15
             os: mac
             arch: arm64
             node_platform: darwin
