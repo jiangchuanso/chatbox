@@ -148,6 +148,15 @@ jobs:
           node-version: ${{ env.NODE_VERSION }}
           cache: pnpm
 
+      - name: Configure default registry for packaging
+        # .erb/scripts/ensure-app-deps.cjs（electron-builder 的 beforePack）要求项目 .npmrc
+        # 显式配置 registry，并把它作为 release/app 下 npm ci 的 npm_config_registry；
+        # 缺这行会抛 "workspace .npmrc must configure a default registry"，打包必失败。
+        # 仓库里不写死 registry，避免覆盖开发者本机 ~/.npmrc 的镜像（如 npmmirror），
+        # 只在 CI 补上官方源（GitHub runner 默认也走它）。
+        shell: bash
+        run: echo 'registry=https://registry.npmjs.org/' >> .npmrc
+
       - name: Install system deps
         # deb 打包需要 fakeroot / dpkg
         if: runner.os == 'Linux'
@@ -163,14 +172,24 @@ jobs:
         #   version of Visual Studio 2017 or newer）。
         # sharp 只由 devDependency @capacitor/assets（仅 mobile:assets 生成图标用）间接引入，
         # 桌面端构建与打包都不需要它（release/app/package.json 的依赖里没有 sharp），
-        # 因此这里把它从 pnpm 构建白名单摘掉，让 pnpm 直接跳过它的构建脚本。
+        # 因此这里在 CI 临时把 pnpm-workspace.yaml 的 allowBuilds.sharp 关掉，让 pnpm
+        # 跳过它的构建脚本。pnpm 10.33 的白名单在 workspace 配置里，不是 package.json
+        # 的 pnpm.onlyBuiltDependencies（本仓库 package.json 根本没有 pnpm 字段）。
         # 不动仓库里的白名单，是因为其它平台 sharp 有预编译包、本地 mobile:assets 仍需要它；
         # 也不用 --ignore-scripts，那会连带跳过 release/app 的 postinstall（electron-rebuild
         # + patch-libsql），使打包出的原生模块 ABI 不匹配。
         if: matrix.id == 'windows-arm64'
         shell: bash
         run: |
-          node -e "const fs=require('fs');const f='package.json';const m=JSON.parse(fs.readFileSync(f,'utf8'));m.pnpm.onlyBuiltDependencies=(m.pnpm.onlyBuiltDependencies||[]).filter((name)=>name!=='sharp');fs.writeFileSync(f,JSON.stringify(m,null,2)+'\n');console.log('pnpm.onlyBuiltDependencies ->',m.pnpm.onlyBuiltDependencies.join(', '))"
+          node -e '
+            const fs = require("fs")
+            const f = "pnpm-workspace.yaml"
+            const s = fs.readFileSync(f, "utf8")
+            const next = s.replace(/^([ \t]*sharp:[ \t]*)true([ \t\r]*)$/m, "$1false$2")
+            if (next === s) throw new Error("allowBuilds.sharp: true not found in " + f)
+            fs.writeFileSync(f, next)
+            console.log("allowBuilds.sharp -> false")
+          '
 
       - name: Install dependencies
         shell: bash
