@@ -8,7 +8,6 @@ import { useStore } from 'zustand'
 import { JK_PAGE_NAMES } from '@/analytics/jk-events'
 import { rendererApplication } from '@/app/renderer-application'
 import MessageList, { type MessageListRef } from '@/components/chat/MessageList'
-import { MessageLongPressHint } from '@/components/chat/MessageLongPressHint'
 import { ChatboxWelcomeCard } from '@/components/common/ChatboxWelcomeCard'
 import { ErrorBoundary } from '@/components/common/ErrorBoundary'
 import InputBox, { type InputBoxPayload } from '@/components/InputBox/InputBox'
@@ -93,7 +92,6 @@ function RouteComponent() {
   )
   const captureAnchor = useCallback(() => messageListRef.current?.captureAnchor() ?? null, [])
   const transcript = useSessionTranscript(sessionLoadTarget, initialOrigin, captureAnchor)
-  const hintMessages = useMemo(() => transcript.rows.map((row) => row.message), [transcript.rows])
   useEffect(() => {
     if (searchTarget) clearSessionSearchTarget(searchTarget)
   }, [searchTarget])
@@ -205,8 +203,8 @@ function RouteComponent() {
     async ({ constructedMessage, needGenerating = true, onUserMessageReady }: InputBoxPayload) => {
       const submittedList = messageListRef.current
       submittedList?.setIsNewMessage(autoScrollNewMessagesToTop)
-      // Read the intent before any await: sending while reading history keeps the reading position, while sending
-      // from the tail (or right after asking for it) keeps following the new turn.
+      // Read the intent before any await: sending from the tail (or right after asking for it), or from anywhere on
+      // a mobile layout, follows the new turn; sending while reading history on a wide layout keeps the position.
       const stillFollowing = autoScrollNewMessagesToTop ? null : (submittedList?.captureSendFollow() ?? null)
 
       if (!currentSession) {
@@ -250,10 +248,6 @@ function RouteComponent() {
   }, [currentSession])
 
   const { requestStop: onStopGenerating, status: stopGenerationStatus } = useGenerationStop(currentSession?.id)
-
-  const onViewCompactionSummary = useCallback((summaryMessageId: string) => {
-    messageListRef.current?.scrollToMessage(summaryMessageId)
-  }, [])
 
   const model = useMemo(() => {
     if (!currentSessionWithDefaultModel?.settings?.modelId || !currentSessionWithDefaultModel?.settings?.provider) {
@@ -339,14 +333,6 @@ function RouteComponent() {
             </Box>
           )}
 
-          {isSmallScreen && (
-            <Box className="pointer-events-none absolute left-0 right-0 z-10" style={{ bottom: '100%' }} mb="xs">
-              <Box className={`${paddedContentColumnClassName(widthFull)} pointer-events-auto`}>
-                <MessageLongPressHint messages={hintMessages} />
-              </Box>
-            </Box>
-          )}
-
           {/* <ScrollButtons /> */}
           <ErrorBoundary name="session-inputbox">
             <InputBox
@@ -361,7 +347,6 @@ function RouteComponent() {
               onSubmit={onSubmit}
               onStopGenerating={onStopGenerating}
               stopGenerationStatus={stopGenerationStatus}
-              onViewCompactionSummary={onViewCompactionSummary}
             />
           </ErrorBoundary>
         </Box>
